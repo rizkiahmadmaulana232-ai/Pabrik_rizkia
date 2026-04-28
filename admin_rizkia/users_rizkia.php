@@ -2,6 +2,7 @@
 
 include '../config_rizkia/koneksi_rizkia.php';
 session_start();
+include '../config_rizkia/security_rizkia.php';
 
 /* ROLE CHECK ADMIN */
 if(!isset($_SESSION['user_rizkia']['role_rizkia']) || $_SESSION['user_rizkia']['role_rizkia'] != 'admin'){
@@ -10,8 +11,14 @@ if(!isset($_SESSION['user_rizkia']['role_rizkia']) || $_SESSION['user_rizkia']['
 
 /* HAPUS USER */
 if(isset($_POST['hapus_rizkia'])){
-    mysqli_query($conn_rizkia,"DELETE FROM users_rizkia 
-    WHERE id_rizkia='$_POST[id]'");
+    if(csrf_validate_rizkia($_POST['csrf_token_rizkia'] ?? '')){
+        $id = (int)($_POST['id'] ?? 0);
+        if($id > 0){
+            $stmt = mysqli_prepare($conn_rizkia, "DELETE FROM users_rizkia WHERE id_rizkia=?");
+            mysqli_stmt_bind_param($stmt, "i", $id);
+            mysqli_stmt_execute($stmt);
+        }
+    }
 }
 ?>
 
@@ -268,6 +275,7 @@ if(isset($_POST['hapus_rizkia'])){
                     </td>
                     <td>
                         <form method="POST" onsubmit="return confirm('Yakin ingin menghapus user ini?')">
+                            <?= csrf_input_rizkia(); ?>
                             <input type="hidden" name="id" value="<?= $d['id_rizkia'] ?>">
                             <button class="btn-hapus" name="hapus_rizkia">Hapus</button>
                         </form>

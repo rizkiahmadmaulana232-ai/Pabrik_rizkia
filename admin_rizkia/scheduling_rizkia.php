@@ -2,6 +2,7 @@
 
 include '../config_rizkia/koneksi_rizkia.php';
 session_start();
+include '../config_rizkia/security_rizkia.php';
 date_default_timezone_set("Asia/Jakarta");
 
 /* ROLE CHECK */
@@ -13,26 +14,33 @@ if(!isset($_SESSION['user_rizkia'])){
 /* CEK BENTROK */
 function cek_bentrok($conn, $mesin, $operator, $mulai, $selesai, $exclude_id = null){
 
-    $filter_id = "";
+    $mesin = (int)$mesin;
+    $operator = (int)$operator;
+    $exclude_id = $exclude_id !== null ? (int)$exclude_id : null;
+
     if($exclude_id){
-        $filter_id = "AND id_rizkia != '$exclude_id'";
+        $sql_mesin = "SELECT id_rizkia FROM scheduling_rizkia WHERE mesin_id_rizkia=? AND status_rizkia='Dijadwalkan' AND (? < waktu_selesai_rizkia AND ? > waktu_mulai_rizkia) AND id_rizkia != ? LIMIT 1";
+        $stmt_mesin = mysqli_prepare($conn, $sql_mesin);
+        mysqli_stmt_bind_param($stmt_mesin, "issi", $mesin, $mulai, $selesai, $exclude_id);
+
+        $sql_operator = "SELECT id_rizkia FROM scheduling_rizkia WHERE operator_id_rizkia=? AND status_rizkia='Dijadwalkan' AND (? < waktu_selesai_rizkia AND ? > waktu_mulai_rizkia) AND id_rizkia != ? LIMIT 1";
+        $stmt_operator = mysqli_prepare($conn, $sql_operator);
+        mysqli_stmt_bind_param($stmt_operator, "issi", $operator, $mulai, $selesai, $exclude_id);
+    } else {
+        $sql_mesin = "SELECT id_rizkia FROM scheduling_rizkia WHERE mesin_id_rizkia=? AND status_rizkia='Dijadwalkan' AND (? < waktu_selesai_rizkia AND ? > waktu_mulai_rizkia) LIMIT 1";
+        $stmt_mesin = mysqli_prepare($conn, $sql_mesin);
+        mysqli_stmt_bind_param($stmt_mesin, "iss", $mesin, $mulai, $selesai);
+
+        $sql_operator = "SELECT id_rizkia FROM scheduling_rizkia WHERE operator_id_rizkia=? AND status_rizkia='Dijadwalkan' AND (? < waktu_selesai_rizkia AND ? > waktu_mulai_rizkia) LIMIT 1";
+        $stmt_operator = mysqli_prepare($conn, $sql_operator);
+        mysqli_stmt_bind_param($stmt_operator, "iss", $operator, $mulai, $selesai);
     }
 
-    $cek_mesin = mysqli_query($conn,"
-    SELECT * FROM scheduling_rizkia
-    WHERE mesin_id_rizkia='$mesin'
-    AND status_rizkia='Dijadwalkan'
-    AND ('$mulai' < waktu_selesai_rizkia AND '$selesai' > waktu_mulai_rizkia)
-    $filter_id
-    ");
+    mysqli_stmt_execute($stmt_mesin);
+    $cek_mesin = mysqli_stmt_get_result($stmt_mesin);
 
-    $cek_operator = mysqli_query($conn,"
-    SELECT * FROM scheduling_rizkia
-    WHERE operator_id_rizkia='$operator'
-    AND status_rizkia='Dijadwalkan'
-    AND ('$mulai' < waktu_selesai_rizkia AND '$selesai' > waktu_mulai_rizkia)
-    $filter_id
-    ");
+    mysqli_stmt_execute($stmt_operator);
+    $cek_operator = mysqli_stmt_get_result($stmt_operator);
 
     if(mysqli_num_rows($cek_mesin) > 0){
         return "Mesin sedang dipakai!";
@@ -48,75 +56,102 @@ function cek_bentrok($conn, $mesin, $operator, $mulai, $selesai, $exclude_id = n
 /* TAMBAH */
 if(isset($_POST['jadwal_rizkia'])){
 
-    $job      = $_POST['job'];
-    $mesin    = $_POST['mesin'];
-    $operator = $_POST['operator'];
-    $waktu    = $_POST['waktu'];
-
-    $job_data = mysqli_fetch_array(mysqli_query($conn_rizkia,
-        "SELECT * FROM jobs_rizkia WHERE id_rizkia='$job'"));
-    $jumlah = $job_data['jumlah_rizkia'];
-
-    $mesin_data = mysqli_fetch_array(mysqli_query($conn_rizkia,
-        "SELECT * FROM mesin_rizkia WHERE id_rizkia='$mesin'"));
-    $durasi = $mesin_data['durasi_produksi_rizkia'];
-
-    $total = $jumlah * $durasi;
-
-    $mulai   = date("Y-m-d H:i:s", strtotime($waktu));
-    $selesai = date("Y-m-d H:i:s", strtotime("+$total minutes", strtotime($waktu)));
-
-    $error = cek_bentrok($conn_rizkia, $mesin, $operator, $mulai, $selesai);
-
-    if(!$error){
-        mysqli_query($conn_rizkia,"INSERT INTO scheduling_rizkia 
-        (job_id_rizkia, mesin_id_rizkia, operator_id_rizkia, waktu_mulai_rizkia, waktu_selesai_rizkia, status_rizkia)
-        VALUES('$job','$mesin','$operator','$mulai','$selesai','Dijadwalkan')");
+    if(!csrf_validate_rizkia($_POST['csrf_token_rizkia'] ?? '')){
+        echo "<script>alert('Token keamanan tidak valid.');</script>";
     } else {
-        echo "<script>alert('$error');</script>";
+        $job      = (int)($_POST['job'] ?? 0);
+        $mesin    = (int)($_POST['mesin'] ?? 0);
+        $operator = (int)($_POST['operator'] ?? 0);
+        $waktu    = $_POST['waktu'] ?? '';
+
+        $stmt_job = mysqli_prepare($conn_rizkia, "SELECT jumlah_rizkia FROM jobs_rizkia WHERE id_rizkia=? LIMIT 1");
+        mysqli_stmt_bind_param($stmt_job, "i", $job);
+        mysqli_stmt_execute($stmt_job);
+        $job_data = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt_job));
+
+        $stmt_mesin = mysqli_prepare($conn_rizkia, "SELECT durasi_produksi_rizkia FROM mesin_rizkia WHERE id_rizkia=? LIMIT 1");
+        mysqli_stmt_bind_param($stmt_mesin, "i", $mesin);
+        mysqli_stmt_execute($stmt_mesin);
+        $mesin_data = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt_mesin));
+
+        if(!$job_data || !$mesin_data || !$waktu){
+            echo "<script>alert('Data scheduling tidak valid.');</script>";
+        } else {
+            $jumlah = (int)$job_data['jumlah_rizkia'];
+            $durasi = (int)$mesin_data['durasi_produksi_rizkia'];
+            $total = $jumlah * $durasi;
+
+            $mulai   = date("Y-m-d H:i:s", strtotime($waktu));
+            $selesai = date("Y-m-d H:i:s", strtotime("+$total minutes", strtotime($waktu)));
+
+            $error = cek_bentrok($conn_rizkia, $mesin, $operator, $mulai, $selesai);
+
+            if(!$error){
+                $stmt_insert = mysqli_prepare($conn_rizkia, "INSERT INTO scheduling_rizkia (job_id_rizkia, mesin_id_rizkia, operator_id_rizkia, waktu_mulai_rizkia, waktu_selesai_rizkia, status_rizkia) VALUES(?,?,?,?,?,'Dijadwalkan')");
+                mysqli_stmt_bind_param($stmt_insert, "iiiss", $job, $mesin, $operator, $mulai, $selesai);
+                mysqli_stmt_execute($stmt_insert);
+            } else {
+                echo "<script>alert('$error');</script>";
+            }
+        }
     }
 }
 
 /* UPDATE */
 if(isset($_POST['update'])){
 
-    $id       = $_POST['id'];
-    $job      = $_POST['job'];
-    $mesin    = $_POST['mesin'];
-    $operator = $_POST['operator'];
-    $waktu    = $_POST['waktu'];
-
-    $job_data = mysqli_fetch_array(mysqli_query($conn_rizkia,
-        "SELECT * FROM jobs_rizkia WHERE id_rizkia='$job'"));
-    $jumlah = $job_data['jumlah_rizkia'];
-
-    $mesin_data = mysqli_fetch_array(mysqli_query($conn_rizkia,
-        "SELECT * FROM mesin_rizkia WHERE id_rizkia='$mesin'"));
-    $durasi = $mesin_data['durasi_produksi_rizkia'];
-
-    $total = $jumlah * $durasi;
-
-    $mulai   = date("Y-m-d H:i:s", strtotime($waktu));
-    $selesai = date("Y-m-d H:i:s", strtotime("+$total minutes", strtotime($waktu)));
-
-    $error = cek_bentrok($conn_rizkia, $mesin, $operator, $mulai, $selesai, $id);
-
-    if(!$error){
-        mysqli_query($conn_rizkia,"UPDATE scheduling_rizkia SET
-        job_id_rizkia='$job',
-        mesin_id_rizkia='$mesin',
-        operator_id_rizkia='$operator',
-        waktu_mulai_rizkia='$mulai',
-        waktu_selesai_rizkia='$selesai'
-        WHERE id_rizkia='$id'");
+    if(!csrf_validate_rizkia($_POST['csrf_token_rizkia'] ?? '')){
+        echo "<script>alert('Token keamanan tidak valid.');</script>";
     } else {
-        echo "<script>alert('$error');</script>";
+        $id       = (int)($_POST['id'] ?? 0);
+        $job      = (int)($_POST['job'] ?? 0);
+        $mesin    = (int)($_POST['mesin'] ?? 0);
+        $operator = (int)($_POST['operator'] ?? 0);
+        $waktu    = $_POST['waktu'] ?? '';
+
+        $stmt_job = mysqli_prepare($conn_rizkia, "SELECT jumlah_rizkia FROM jobs_rizkia WHERE id_rizkia=? LIMIT 1");
+        mysqli_stmt_bind_param($stmt_job, "i", $job);
+        mysqli_stmt_execute($stmt_job);
+        $job_data = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt_job));
+
+        $stmt_mesin = mysqli_prepare($conn_rizkia, "SELECT durasi_produksi_rizkia FROM mesin_rizkia WHERE id_rizkia=? LIMIT 1");
+        mysqli_stmt_bind_param($stmt_mesin, "i", $mesin);
+        mysqli_stmt_execute($stmt_mesin);
+        $mesin_data = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt_mesin));
+
+        if(!$job_data || !$mesin_data || !$waktu || $id <= 0){
+            echo "<script>alert('Data scheduling tidak valid.');</script>";
+        } else {
+            $jumlah = (int)$job_data['jumlah_rizkia'];
+            $durasi = (int)$mesin_data['durasi_produksi_rizkia'];
+            $total = $jumlah * $durasi;
+
+            $mulai   = date("Y-m-d H:i:s", strtotime($waktu));
+            $selesai = date("Y-m-d H:i:s", strtotime("+$total minutes", strtotime($waktu)));
+
+            $error = cek_bentrok($conn_rizkia, $mesin, $operator, $mulai, $selesai, $id);
+
+            if(!$error){
+                $stmt_update = mysqli_prepare($conn_rizkia, "UPDATE scheduling_rizkia SET job_id_rizkia=?, mesin_id_rizkia=?, operator_id_rizkia=?, waktu_mulai_rizkia=?, waktu_selesai_rizkia=? WHERE id_rizkia=?");
+                mysqli_stmt_bind_param($stmt_update, "iiissi", $job, $mesin, $operator, $mulai, $selesai, $id);
+                mysqli_stmt_execute($stmt_update);
+            } else {
+                echo "<script>alert('$error');</script>";
+            }
+        }
     }
 }
 
 /* DELETE */
 if(isset($_POST['hapus'])){
-    mysqli_query($conn_rizkia,"DELETE FROM scheduling_rizkia WHERE id_rizkia='$_POST[id]'");
+    if(csrf_validate_rizkia($_POST['csrf_token_rizkia'] ?? '')){
+        $id = (int)($_POST['id'] ?? 0);
+        if($id > 0){
+            $stmt_delete = mysqli_prepare($conn_rizkia, "DELETE FROM scheduling_rizkia WHERE id_rizkia=?");
+            mysqli_stmt_bind_param($stmt_delete, "i", $id);
+            mysqli_stmt_execute($stmt_delete);
+        }
+    }
 }
 
 /* DATA */
@@ -407,6 +442,7 @@ button:hover,.btn:hover{
 <h3>Tambah Jadwal</h3>
 
 <form method="POST">
+<?= csrf_input_rizkia(); ?>
 
 <label>Job</label>
 <select name="job">
@@ -484,6 +520,7 @@ while($d = mysqli_fetch_array($o)){
 )">Edit</button>
 
 <form method="POST" style="display:inline">
+    <?= csrf_input_rizkia(); ?>
     <input type="hidden" name="id" value="<?= $d['id_rizkia'] ?>">
     <button class="btn-hapus" name="hapus">Hapus</button>
 </form>
@@ -503,6 +540,7 @@ while($d = mysqli_fetch_array($o)){
 <h3>Edit Jadwal</h3>
 
 <form method="POST">
+<?= csrf_input_rizkia(); ?>
 
 <input type="hidden" name="id" id="id">
 
