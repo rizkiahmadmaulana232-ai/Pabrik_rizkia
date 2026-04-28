@@ -2,17 +2,35 @@
 
 session_start();
 include '../config_rizkia/koneksi_rizkia.php';
+include '../config_rizkia/security_rizkia.php';
 
 if(isset($_POST['login_rizkia'])){
-    $username_rizkia = $_POST['username_rizkia'];
-    $password_rizkia = md5($_POST['password_rizkia']);
+    if(!csrf_validate_rizkia($_POST['csrf_token_rizkia'] ?? '')){
+        $error = "Token keamanan tidak valid. Coba refresh halaman.";
+    } else {
+        $username_rizkia = trim($_POST['username_rizkia'] ?? '');
+        $password_input_rizkia = $_POST['password_rizkia'] ?? '';
 
-    $query_rizkia = mysqli_query($conn_rizkia,"SELECT * FROM users_rizkia 
-        WHERE username_rizkia='$username_rizkia' AND password_rizkia='$password_rizkia'");
+        $stmt_rizkia = mysqli_prepare($conn_rizkia, "SELECT * FROM users_rizkia WHERE username_rizkia=? LIMIT 1");
+        mysqli_stmt_bind_param($stmt_rizkia, "s", $username_rizkia);
+        mysqli_stmt_execute($stmt_rizkia);
+        $result_rizkia = mysqli_stmt_get_result($stmt_rizkia);
+        $data_rizkia = mysqli_fetch_assoc($result_rizkia);
 
-    $data_rizkia = mysqli_fetch_assoc($query_rizkia);
+        $is_valid = false;
+        if($data_rizkia){
+            if(password_verify($password_input_rizkia, $data_rizkia['password_rizkia'])){
+                $is_valid = true;
+            } elseif(strlen($data_rizkia['password_rizkia']) === 32 && md5($password_input_rizkia) === $data_rizkia['password_rizkia']){
+                $is_valid = true;
+                $new_hash_rizkia = password_hash($password_input_rizkia, PASSWORD_DEFAULT);
+                $update_stmt = mysqli_prepare($conn_rizkia, "UPDATE users_rizkia SET password_rizkia=? WHERE id_rizkia=?");
+                mysqli_stmt_bind_param($update_stmt, "si", $new_hash_rizkia, $data_rizkia['id_rizkia']);
+                mysqli_stmt_execute($update_stmt);
+            }
+        }
 
-    if($data_rizkia){
+        if($is_valid){
         $_SESSION['user_rizkia'] = $data_rizkia;
 
         if($data_rizkia['role_rizkia'] == 'admin'){
@@ -23,8 +41,9 @@ if(isset($_POST['login_rizkia'])){
             header("Location: ../engineering_rizkia/dashboard_rizkia.php");
         }
         exit;
-    }else{
-        $error = "Username atau Password salah!";
+        }else{
+            $error = "Username atau Password salah!";
+        }
     }
 }
 ?>
@@ -292,6 +311,7 @@ if(isset($_POST['login_rizkia'])){
             <?php } ?>
 
             <form method="POST">
+                <?= csrf_input_rizkia(); ?>
                 <div class="input-group">
                     <label>Username</label>
                     <input type="text" name="username_rizkia" placeholder="Masukkan username" required>
