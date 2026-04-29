@@ -27,6 +27,7 @@ if(isset($_POST['simpan_rizkia'])){
         $popup_type_rizkia = "error";
     }
 }
+
 ?>
 
 <!DOCTYPE html>

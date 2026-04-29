@@ -14,6 +14,7 @@ $now = date("Y-m-d H:i:s");
 
 function ada_kolom_scheduling($conn_rizkia, $nama_kolom){
     static $cache_kolom = [];
+
     if(isset($cache_kolom[$nama_kolom])){
         return $cache_kolom[$nama_kolom];
     }
@@ -21,6 +22,7 @@ function ada_kolom_scheduling($conn_rizkia, $nama_kolom){
     $nama_kolom_aman = mysqli_real_escape_string($conn_rizkia, $nama_kolom);
     $q = mysqli_query($conn_rizkia, "SHOW COLUMNS FROM scheduling_rizkia LIKE '$nama_kolom_aman'");
     $cache_kolom[$nama_kolom] = $q && mysqli_num_rows($q) > 0;
+
     return $cache_kolom[$nama_kolom];
 }
 
@@ -30,12 +32,18 @@ function sinkron_status_job($conn_rizkia, $job_id){
         return;
     }
 
-    $stmt = mysqli_prepare($conn_rizkia, "SELECT COUNT(*) AS total, SUM(CASE WHEN status_rizkia='Selesai' THEN 1 ELSE 0 END) AS selesai FROM scheduling_rizkia WHERE job_id_rizkia=?");
+    $stmt = mysqli_prepare($conn_rizkia, "
+        SELECT 
+            COUNT(*) AS total,
+            SUM(CASE WHEN status_rizkia='Selesai' THEN 1 ELSE 0 END) AS selesai
+        FROM scheduling_rizkia
+        WHERE job_id_rizkia=?
+    ");
     mysqli_stmt_bind_param($stmt, "i", $job_id);
     mysqli_stmt_execute($stmt);
     $r = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
 
-    $total = (int)($r['total'] ?? 0);
+    $total   = (int)($r['total'] ?? 0);
     $selesai = (int)($r['selesai'] ?? 0);
 
     if($total > 0 && $selesai === $total){
@@ -46,13 +54,21 @@ function sinkron_status_job($conn_rizkia, $job_id){
         $status_job = 'Menunggu';
     }
 
-    $stmt_update_job = mysqli_prepare($conn_rizkia, "UPDATE jobs_rizkia SET status_rizkia=? WHERE id_rizkia=?");
-    mysqli_stmt_bind_param($stmt_update_job, "si", $status_job, $job_id);
-    mysqli_stmt_execute($stmt_update_job);
+    $stmt_update = mysqli_prepare($conn_rizkia, "UPDATE jobs_rizkia SET status_rizkia=? WHERE id_rizkia=?");
+    mysqli_stmt_bind_param($stmt_update, "si", $status_job, $job_id);
+    mysqli_stmt_execute($stmt_update);
 }
+
+/* CEK KOLOM DINAMIS */
+$kolom_actual_selesai   = ada_kolom_scheduling($conn_rizkia, 'actual_selesai_rizkia');
+$kolom_qty_selesai      = ada_kolom_scheduling($conn_rizkia, 'qty_selesai_rizkia');
+$kolom_qty_reject       = ada_kolom_scheduling($conn_rizkia, 'qty_reject_rizkia');
+$kolom_catatan_operator = ada_kolom_scheduling($conn_rizkia, 'catatan_operator_rizkia');
+$kolom_kendala          = ada_kolom_scheduling($conn_rizkia, 'kendala_rizkia');
 
 /* ACTION */
 if(isset($_POST['aksi_rizkia'])){
+<<<<<<< HEAD
     $id = (int)$_POST['jadwal_id_rizkia'];
     $aksi = $_POST['aksi_rizkia'];
     $kendala = trim($_POST['kendala_rizkia'] ?? '');
@@ -60,36 +76,59 @@ if(isset($_POST['aksi_rizkia'])){
     $qty_reject = (int)($_POST['qty_reject_rizkia'] ?? 0);
     $qty_ok = max(0, $qty_total - $qty_reject);
     $job_id = 0;
+=======
+    $id         = (int)($_POST['jadwal_id_rizkia'] ?? 0);
+    $aksi       = $_POST['aksi_rizkia'] ?? '';
+    $kendala    = trim($_POST['kendala_rizkia'] ?? '');
+    $qty_ok     = (int)($_POST['qty_selesai_rizkia'] ?? 0);
+    $qty_reject = (int)($_POST['qty_reject_rizkia'] ?? 0);
+    $job_id     = 0;
+>>>>>>> 9c624b1 (simpan perubahan lokal)
 
-    $stmt_job = mysqli_prepare($conn_rizkia, "SELECT job_id_rizkia FROM scheduling_rizkia WHERE id_rizkia=? AND operator_id_rizkia=? LIMIT 1");
+    $stmt_job = mysqli_prepare($conn_rizkia, "
+        SELECT job_id_rizkia
+        FROM scheduling_rizkia
+        WHERE id_rizkia=? AND operator_id_rizkia=?
+        LIMIT 1
+    ");
     mysqli_stmt_bind_param($stmt_job, "ii", $id, $id_operator);
     mysqli_stmt_execute($stmt_job);
     $jadwal_ref = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt_job));
     $job_id = (int)($jadwal_ref['job_id_rizkia'] ?? 0);
 
     if($aksi == 'mulai' && $job_id > 0){
-        mysqli_query($conn_rizkia,"
-        UPDATE scheduling_rizkia 
-        SET status_rizkia='Berjalan',
-            actual_mulai_rizkia=COALESCE(actual_mulai_rizkia,'$now')
-        WHERE id_rizkia='$id' AND operator_id_rizkia='$id_operator'
+        mysqli_query($conn_rizkia, "
+            UPDATE scheduling_rizkia
+            SET status_rizkia='Berjalan'
+            WHERE id_rizkia='$id' AND operator_id_rizkia='$id_operator'
         ");
 
-        mysqli_query($conn_rizkia,"UPDATE jobs_rizkia SET status_rizkia='Proses' WHERE id_rizkia='$job_id'");
+        mysqli_query($conn_rizkia, "
+            UPDATE jobs_rizkia
+            SET status_rizkia='Proses'
+            WHERE id_rizkia='$job_id'
+        ");
     }
 
     if($aksi == 'tunda' && $job_id > 0){
-        mysqli_query($conn_rizkia,"
-        UPDATE scheduling_rizkia 
-        SET status_rizkia='Tertunda',
-            kendala_rizkia='$kendala'
-        WHERE id_rizkia='$id' AND operator_id_rizkia='$id_operator'
+        $set_kendala = $kolom_kendala ? ", kendala_rizkia='".mysqli_real_escape_string($conn_rizkia, $kendala)."'" : "";
+
+        mysqli_query($conn_rizkia, "
+            UPDATE scheduling_rizkia
+            SET status_rizkia='Tertunda'
+                $set_kendala
+            WHERE id_rizkia='$id' AND operator_id_rizkia='$id_operator'
         ");
 
-        mysqli_query($conn_rizkia,"UPDATE jobs_rizkia SET status_rizkia='Proses' WHERE id_rizkia='$job_id'");
+        mysqli_query($conn_rizkia, "
+            UPDATE jobs_rizkia
+            SET status_rizkia='Proses'
+            WHERE id_rizkia='$job_id'
+        ");
     }
 
     if($aksi == 'selesai' && $job_id > 0){
+<<<<<<< HEAD
         if($qty_total < 0){
             $qty_total = 0;
         }
@@ -101,16 +140,24 @@ if(isset($_POST['aksi_rizkia'])){
         }
         $qty_ok = $qty_total - $qty_reject;
         $catatan = "Total:$qty_total | OK:$qty_ok | Reject:$qty_reject | $kendala";
+=======
+        $catatan = "OK:$qty_ok | Reject:$qty_reject | $kendala";
+>>>>>>> 9c624b1 (simpan perubahan lokal)
 
-        mysqli_query($conn_rizkia,"
-        UPDATE scheduling_rizkia 
-        SET status_rizkia='Selesai',
-            actual_selesai_rizkia='$now',
-            waktu_selesai_rizkia='$now',
-            qty_selesai_rizkia='$qty_ok',
-            qty_reject_rizkia='$qty_reject',
-            catatan_operator_rizkia='$catatan'
-        WHERE id_rizkia='$id' AND operator_id_rizkia='$id_operator'
+        $set_actual_selesai   = $kolom_actual_selesai ? ", actual_selesai_rizkia='$now'" : "";
+        $set_qty_selesai      = $kolom_qty_selesai ? ", qty_selesai_rizkia='$qty_ok'" : "";
+        $set_qty_reject       = $kolom_qty_reject ? ", qty_reject_rizkia='$qty_reject'" : "";
+        $set_catatan_operator = $kolom_catatan_operator ? ", catatan_operator_rizkia='".mysqli_real_escape_string($conn_rizkia, $catatan)."'" : "";
+
+        mysqli_query($conn_rizkia, "
+            UPDATE scheduling_rizkia
+            SET status_rizkia='Selesai',
+                waktu_selesai_rizkia='$now'
+                $set_actual_selesai
+                $set_qty_selesai
+                $set_qty_reject
+                $set_catatan_operator
+            WHERE id_rizkia='$id' AND operator_id_rizkia='$id_operator'
         ");
 
         sinkron_status_job($conn_rizkia, $job_id);
@@ -118,6 +165,7 @@ if(isset($_POST['aksi_rizkia'])){
 }
 
 /* DATA */
+<<<<<<< HEAD
 $data = mysqli_query($conn_rizkia,"
 SELECT s.*, j.nama_job_rizkia, j.jumlah_rizkia, m.nama_mesin_rizkia
 FROM scheduling_rizkia s
@@ -125,16 +173,27 @@ LEFT JOIN jobs_rizkia j ON s.job_id_rizkia=j.id_rizkia
 LEFT JOIN mesin_rizkia m ON s.mesin_id_rizkia=m.id_rizkia
 WHERE s.operator_id_rizkia='$id_operator'
 ORDER BY FIELD(s.status_rizkia,'Berjalan','Tertunda','Dijadwalkan','Selesai'), s.waktu_mulai_rizkia ASC
+=======
+$data = mysqli_query($conn_rizkia, "
+    SELECT s.*, j.nama_job_rizkia, m.nama_mesin_rizkia
+    FROM scheduling_rizkia s
+    LEFT JOIN jobs_rizkia j ON s.job_id_rizkia = j.id_rizkia
+    LEFT JOIN mesin_rizkia m ON s.mesin_id_rizkia = m.id_rizkia
+    WHERE s.operator_id_rizkia = '$id_operator'
+    ORDER BY FIELD(s.status_rizkia,'Berjalan','Tertunda','Dijadwalkan','Selesai'),
+             s.waktu_mulai_rizkia ASC
+>>>>>>> 9c624b1 (simpan perubahan lokal)
 ");
 ?>
 
 <!DOCTYPE html>
-<html>
+<html lang="id">
 <head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Work Center Operator - MachinaFlow</title>
 
 <style>
-/* CSS TETAP - TIDAK DIUBAH SAMA SEKALI */
 *{
     margin:0;
     padding:0;
@@ -148,8 +207,8 @@ body{
 }
 
 @keyframes fadeUp{
-    from{opacity:0; transform:translateY(18px);}
-    to{opacity:1; transform:translateY(0);}
+    from{opacity:0;transform:translateY(18px);}
+    to{opacity:1;transform:translateY(0);}
 }
 
 .sidebar{
@@ -237,6 +296,7 @@ body{
     border-radius:999px;
     color:white;
     font-size:12px;
+    font-weight:bold;
 }
 
 .Dijadwalkan{background:#f39c12;}
@@ -253,12 +313,18 @@ input,textarea{
     border:1px solid #ccc;
 }
 
+textarea{
+    min-height:80px;
+    resize:vertical;
+}
+
 .btn{
     padding:8px 12px;
     border:none;
     border-radius:8px;
     color:white;
     cursor:pointer;
+    font-weight:bold;
 }
 
 .mulai{background:#2980b9;}
@@ -270,10 +336,10 @@ input,textarea{
     grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
     gap:10px;
     margin-top:10px;
+    margin-bottom:15px;
 }
 </style>
 </head>
-
 <body>
 
 <div class="sidebar">
@@ -287,69 +353,79 @@ input,textarea{
 
 <div class="header">
     <h2>Work Center Operator</h2>
-    <span>Halo, <?= $nama_operator ?></span>
+    <span>Halo, <?= htmlspecialchars($nama_operator) ?></span>
 </div>
 
 <div class="content">
 
 <?php while($d = mysqli_fetch_assoc($data)){ ?>
-
 <div class="card">
 
-    <div style="display:flex;justify-content:space-between;">
-        <h3><?= $d['nama_job_rizkia'] ?> - <?= $d['nama_mesin_rizkia'] ?></h3>
-        <span class="status <?= $d['status_rizkia'] ?>"><?= $d['status_rizkia'] ?></span>
+    <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+        <h3><?= htmlspecialchars($d['nama_job_rizkia'] ?? '-') ?> - <?= htmlspecialchars($d['nama_mesin_rizkia'] ?? '-') ?></h3>
+        <span class="status <?= htmlspecialchars($d['status_rizkia']) ?>">
+            <?= htmlspecialchars($d['status_rizkia']) ?>
+        </span>
     </div>
 
     <div class="grid">
+<<<<<<< HEAD
         <div><b>Mulai</b><br><?= $d['waktu_mulai_rizkia'] ?></div>
         <div><b>Actual Mulai</b><br><?= ($d['actual_mulai_rizkia'] ?? '') ?: '-' ?></div>
         <div><b>Target Produksi</b><br><?= (int)($d['jumlah_rizkia'] ?? 0) ?></div>
         <div><b>Selesai</b><br>
             <?= ($d['waktu_selesai_rizkia'] ?? '') ?: (($d['actual_selesai_rizkia'] ?? '') ?: '-') ?>
+=======
+        <div>
+            <b>Mulai</b><br>
+            <?= htmlspecialchars($d['waktu_mulai_rizkia'] ?? '-') ?>
+        </div>
+        <div>
+            <b>Selesai</b><br>
+            <?= htmlspecialchars(($d['waktu_selesai_rizkia'] ?? '') ?: (($d['actual_selesai_rizkia'] ?? '') ?: '-')) ?>
+>>>>>>> 9c624b1 (simpan perubahan lokal)
         </div>
     </div>
 
-    <?php if($d['status_rizkia'] != 'Selesai'){ ?>
+    <?php if(($d['status_rizkia'] ?? '') != 'Selesai'){ ?>
+        <form method="POST">
+            <input type="hidden" name="jadwal_id_rizkia" value="<?= (int)$d['id_rizkia'] ?>">
 
-    <form method="POST">
+            <label>Qty OK</label>
+            <input type="number" name="qty_selesai_rizkia" min="0" value="0">
 
-        <input type="hidden" name="jadwal_id_rizkia" value="<?= $d['id_rizkia'] ?>">
+            <label>Qty Reject</label>
+            <input type="number" name="qty_reject_rizkia" min="0" value="0">
 
+<<<<<<< HEAD
         <label>Total Produksi</label>
         <input type="number" name="qty_total_rizkia" min="0" placeholder="Total unit yang diproduksi">
 
         <label>Qty Reject</label>
         <input type="number" name="qty_reject_rizkia" min="0" placeholder="Unit cacat / ditolak">
+=======
+            <label>Kendala</label>
+            <textarea name="kendala_rizkia"></textarea>
 
-        <label>Kendala</label>
-        <textarea name="kendala_rizkia"></textarea>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <?php if(($d['status_rizkia'] ?? '') == 'Dijadwalkan'){ ?>
+                    <button class="btn mulai" name="aksi_rizkia" value="mulai">Mulai</button>
+                <?php } ?>
+>>>>>>> 9c624b1 (simpan perubahan lokal)
 
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <?php if(($d['status_rizkia'] ?? '') == 'Berjalan'){ ?>
+                    <button class="btn tunda" name="aksi_rizkia" value="tunda">Tunda</button>
+                <?php } ?>
 
-            <?php if($d['status_rizkia']=='Dijadwalkan'){ ?>
-            <button class="btn mulai" name="aksi_rizkia" value="mulai">Mulai</button>
-            <?php } ?>
-
-            <?php if($d['status_rizkia']=='Berjalan'){ ?>
-            <button class="btn tunda" name="aksi_rizkia" value="tunda">Tunda</button>
-            <?php } ?>
-
-            <button class="btn selesai" name="aksi_rizkia" value="selesai">Selesai</button>
-
-        </div>
-
-    </form>
-
+                <button class="btn selesai" name="aksi_rizkia" value="selesai">Selesai</button>
+            </div>
+        </form>
     <?php } else { ?>
-
-        <p><b>Hasil:</b> OK <?= $d['qty_selesai_rizkia'] ?? 0 ?> | Reject <?= $d['qty_reject_rizkia'] ?? 0 ?></p>
-        <p><b>Catatan:</b> <?= $d['catatan_operator_rizkia'] ?? '-' ?></p>
-
+        <p><b>Hasil:</b> OK <?= (int)($d['qty_selesai_rizkia'] ?? 0) ?> | Reject <?= (int)($d['qty_reject_rizkia'] ?? 0) ?></p>
+        <p><b>Catatan:</b> <?= htmlspecialchars($d['catatan_operator_rizkia'] ?? '-') ?></p>
     <?php } ?>
 
 </div>
-
 <?php } ?>
 
 </div>
